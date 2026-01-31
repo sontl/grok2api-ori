@@ -232,7 +232,7 @@ class VideoCache(CacheService):
     """视频缓存服务"""
 
     def __init__(self):
-        super().__init__("video", timeout=60.0)
+        super().__init__("video", timeout=180.0)
 
     async def download_video(self, path: str, token: str) -> Optional[Path]:
         """下载视频"""

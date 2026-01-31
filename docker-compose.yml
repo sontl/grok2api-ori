@@ -1,6 +1,6 @@
 services:
   grok2api:
-    image: ghcr.io/chenyme/grok2api:latest
+    build: .
     ports:
       - "8018:8000"
     volumes:

@@ -18,7 +18,7 @@ from app.services.grok.statsig import get_dynamic_headers
 
 # 常量
 RATE_LIMIT_API = "https://grok.com/rest/rate-limits"
-TIMEOUT = 30
+TIMEOUT = 90
 BROWSER = "chrome133a"
 MAX_FAILURES = 3
 TOKEN_INVALID = 401

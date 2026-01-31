@@ -13,12 +13,13 @@ from app.services.grok.statsig import get_dynamic_headers
 from app.services.grok.token import token_manager
 from app.services.grok.upload import ImageUploadManager
 from app.services.grok.create import PostCreateManager
+from app.services.grok.upscale import VideoUpscaleManager
 from app.core.exception import GrokApiException
 
 
 # 常量
 API_ENDPOINT = "https://grok.com/rest/app-chat/conversations/new"
-TIMEOUT = 120
+TIMEOUT = 220
 BROWSER = "chrome133a"
 MAX_RETRY = 3
 MAX_UPLOADS = 20  # 提高并发上传限制以支持更高并发
@@ -45,7 +46,8 @@ class GrokClient:
         model = request["model"]
         content, images = GrokClient._extract_content(request["messages"])
         stream = request.get("stream", False)
-        
+        auto_upscale = request.get("auto_upscale")
+
         # 获取模型信息
         info = Models.get_model_info(model)
         grok_model, mode = Models.to_grok(model)
@@ -56,10 +58,21 @@ class GrokClient:
             logger.warning(f"[Client] 视频模型仅支持1张图片，已截取前1张")
             images = images[:1]
         
-        return await GrokClient._retry(model, content, images, grok_model, mode, is_video, stream)
+        return await GrokClient._retry(model, content, images, grok_model, mode, is_video, stream, auto_upscale)
 
     @staticmethod
-    async def _retry(model: str, content: str, images: List[str], grok_model: str, mode: str, is_video: bool, stream: bool):
+    async def upscale_video(video_id: str, model: str = "grok-3"):
+        """Upscale video to HD"""
+        # Get available token
+        auth_token = token_manager.get_token(model)
+        if not auth_token:
+            raise GrokApiException("No available token found", "NO_AVAILABLE_TOKEN")
+            
+        return await VideoUpscaleManager.upscale(video_id, auth_token)
+
+
+    @staticmethod
+    async def _retry(model: str, content: str, images: List[str], grok_model: str, mode: str, is_video: bool, stream: bool, auto_upscale: bool = None):
         """重试请求"""
         last_err = None
 
@@ -74,7 +87,7 @@ class GrokClient:
                     post_id = await GrokClient._create_post(img_ids[0], img_uris[0], token)
 
                 payload = GrokClient._build_payload(content, grok_model, mode, img_ids, img_uris, is_video, post_id)
-                return await GrokClient._request(payload, token, model, stream, post_id)
+                return await GrokClient._request(payload, token, model, stream, post_id, auto_upscale)
 
             except GrokApiException as e:
                 last_err = e
@@ -82,7 +95,7 @@ class GrokClient:
                 if e.error_code not in ["HTTP_ERROR", "NO_AVAILABLE_TOKEN"]:
                     raise
 
-                status = e.context.get("status") if e.context else None
+                status = e.details.get("status") if e.details else None
                 retry_codes = setting.grok_config.get("retry_status_codes", [401, 429])
                 
                 if status not in retry_codes:
@@ -191,7 +204,7 @@ class GrokClient:
         }
 
     @staticmethod
-    async def _request(payload: dict, token: str, model: str, stream: bool, post_id: str = None):
+    async def _request(payload: dict, token: str, model: str, stream: bool, post_id: str = None, auto_upscale: bool = None):
         """发送请求"""
         if not token:
             raise GrokApiException("认证令牌缺失", "NO_AUTH_TOKEN")
@@ -274,8 +287,8 @@ class GrokClient:
                         logger.info(f"[Client] 重试成功！")
                     
                     # 处理响应
-                    result = (GrokResponseProcessor.process_stream(response, token) if stream 
-                             else await GrokResponseProcessor.process_normal(response, token, model))
+                    result = (GrokResponseProcessor.process_stream(response, token, auto_upscale) if stream 
+                             else await GrokResponseProcessor.process_normal(response, token, model, auto_upscale))
                     
                     asyncio.create_task(GrokClient._update_limits(token, model))
                     return result

@@ -13,7 +13,7 @@ from app.core.logger import logger
 
 # 常量
 ENDPOINT = "https://grok.com/rest/media/post/create"
-TIMEOUT = 30
+TIMEOUT = 90
 BROWSER = "chrome133a"
 
 

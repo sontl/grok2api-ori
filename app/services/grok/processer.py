@@ -6,6 +6,7 @@ import time
 import asyncio
 from typing import AsyncGenerator, Tuple
 
+from app.services.grok.upscale import VideoUpscaleManager
 from app.core.config import setting
 from app.core.exception import GrokApiException
 from app.core.logger import logger
@@ -60,7 +61,7 @@ class GrokResponseProcessor:
     """Grok响应处理器"""
 
     @staticmethod
-    async def process_normal(response, auth_token: str, model: str = None) -> OpenAIChatCompletionResponse:
+    async def process_normal(response, auth_token: str, model: str = None, auto_upscale: bool = None) -> OpenAIChatCompletionResponse:
         """处理非流式响应"""
         response_closed = False
         try:
@@ -83,7 +84,8 @@ class GrokResponseProcessor:
                 # 视频响应
                 if video_resp := grok_resp.get("streamingVideoGenerationResponse"):
                     if video_url := video_resp.get("videoUrl"):
-                        content = await GrokResponseProcessor._build_video_content(video_url, auth_token)
+                        video_id = video_resp.get("videoId")
+                        content = await GrokResponseProcessor._build_video_content(video_url, video_id, auth_token, auto_upscale)
                         result = GrokResponseProcessor._build_response(content, model or "grok-imagine-0.9")
                         response_closed = True
                         response.close()
@@ -126,7 +128,7 @@ class GrokResponseProcessor:
                     logger.warning(f"[Processor] 关闭响应失败: {e}")
 
     @staticmethod
-    async def process_stream(response, auth_token: str) -> AsyncGenerator[str, None]:
+    async def process_stream(response, auth_token: str, auto_upscale: bool = None) -> AsyncGenerator[str, None]:
         """处理流式响应"""
         # 状态变量
         is_image = False
@@ -221,7 +223,8 @@ class GrokResponseProcessor:
                         # 视频URL
                         if v_url:
                             logger.debug("[Processor] 视频生成完成")
-                            video_content = await GrokResponseProcessor._build_video_content(v_url, auth_token)
+                            video_id = video_resp.get("videoId")
+                            video_content = await GrokResponseProcessor._build_video_content(v_url, video_id, auth_token, auto_upscale)
                             yield make_chunk(video_content)
                         
                         continue
@@ -358,9 +361,28 @@ class GrokResponseProcessor:
                     logger.warning(f"[Processor] 关闭失败: {e}")
 
     @staticmethod
-    async def _build_video_content(video_url: str, auth_token: str) -> str:
+    async def _build_video_content(video_url: str, video_id: str, auth_token: str, auto_upscale: bool = None) -> str:
         """构建视频内容"""
         logger.debug(f"[Processor] 检测到视频: {video_url}")
+
+        # Handle User's custom auto-upscale feature
+        is_upscaled = False
+        if auto_upscale and video_id:
+            try:
+                upscale_result = await VideoUpscaleManager.upscale(video_id, auth_token)
+                if upscale_result and upscale_result.get("success"):
+                    hd_url = upscale_result.get("hd_media_url")
+                    if hd_url:
+                        # The upscale.py returns either a local cached URL or the original HD URL
+                        # If it starts with http or /, it's already a complete URL
+                        if hd_url.startswith('http') or hd_url.startswith('/'):
+                            return f'<video src="{hd_url}" controls="controls" width="500" height="300"></video>\n'
+                        else:
+                            # Fallback: prepend assets URL
+                            return f'<video src="https://assets.grok.com/{hd_url}" controls="controls" width="500" height="300"></video>\n'
+            except Exception as e:
+                logger.warning(f"[Processor] Auto upscale failed: {e}")
+
         full_url = f"https://assets.grok.com/{video_url}"
         
         try:

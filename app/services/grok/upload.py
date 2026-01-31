@@ -15,7 +15,7 @@ from app.core.logger import logger
 
 # 常量
 UPLOAD_API = "https://grok.com/rest/app-chat/upload-file"
-TIMEOUT = 30
+TIMEOUT = 90
 BROWSER = "chrome133a"
 
 # MIME类型
